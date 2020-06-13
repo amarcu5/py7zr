@@ -35,9 +35,9 @@ from Crypto.Random import get_random_bytes
 from py7zr.exceptions import PasswordRequired, UnsupportedCompressionMethodError
 from py7zr.helpers import Buffer, BufferedRW, calculate_crc32, calculate_key
 from py7zr.properties import (FILTER_ARM, FILTER_ARMTHUMB, FILTER_BZIP2, FILTER_COPY, FILTER_CRYPTO_AES256_SHA256,
-                              FILTER_DEFLATE, FILTER_DELTA, FILTER_IA64, FILTER_LZMA, FILTER_LZMA2, FILTER_POWERPC,
-                              FILTER_PPMD, FILTER_SPARC, FILTER_X86, FILTER_ZSTD, MAGIC_7Z, READ_BLOCKSIZE,
-                              CompressionMethod)
+                              FILTER_DEFLATE, FILTER_DELTA, FILTER_IA64, FILTER_LZ4, FILTER_LZMA, FILTER_LZMA2,
+                              FILTER_POWERPC, FILTER_PPMD, FILTER_SPARC, FILTER_X86, FILTER_ZSTD, MAGIC_7Z,
+                              READ_BLOCKSIZE, CompressionMethod)
 
 try:
     import zstandard as Zstd  # type: ignore
@@ -47,6 +47,10 @@ try:
     import ppmd as Ppmd  # type: ignore
 except ImportError:
     Ppmd = None
+try:
+    import lz4.stream as LZ4  # type: ignore
+except ImportError:
+    LZ4 = None
 
 
 class ISevenZipCompressor(ABC):
@@ -249,6 +253,41 @@ class CopyDecompressor(ISevenZipDecompressor):
 
     def decompress(self, data: Union[bytes, bytearray, memoryview], max_length: int = -1) -> bytes:
         return bytes(data)
+
+
+class LZ4Compressor(ISevenZipCompressor):
+    """Compress data with LZ4 stream mode."""
+
+    def __init__(self):
+        if LZ4 is None:
+            raise UnsupportedCompressionMethodError
+        self._compressor = LZ4.LZ4StreamCompressor(strategy="double buffer", buffer_size=LZ4.LZ4_MAX_INPUT_SIZE)
+
+    def compress(self, data: Union[bytes, bytearray, memoryview]) -> bytes:
+        return self._compressor.compress(data)
+
+    def flush(self):
+        return b''
+
+
+class LZ4Decompressor(ISevenZipDecompressor):
+    """Decompress LZ4 stream compressed data."""
+
+    def __init__(self):
+        if LZ4 is None:
+            raise UnsupportedCompressionMethodError
+        self.buf = b''  # type: bytes
+        self._decompressor = LZ4.LZ4StreamDecompressor(strategy="double_buffer", buffer_size=LZ4.LZ4_MAX_INPUT_SIZE)
+
+    def decompress(self, data: Union[bytes, bytearray, memoryview], max_length: int = 0) -> bytes:
+        if max_length == 0:
+            res = self.buf + self._decompressor.decompress(data)
+            self.buf = b''
+        else:
+            tmp = self.buf + self._decompressor.decompress(data)
+            res = tmp[:max_length]
+            self.buf = tmp[max_length:]
+        return res
 
 
 class ZstdDecompressor(ISevenZipDecompressor):
@@ -667,6 +706,7 @@ algorithm_class_map = {
     FILTER_ARMTHUMB: (BcjArmtEncoder, BcjArmtDecoder),
     FILTER_POWERPC: (BcjPpcEncoder, BcjPpcDecoder),
     FILTER_SPARC: (BcjSparcEncoder, BcjSparcDecoder),
+    FILTER_LZ4: {LZ4Compressor, LZ4Decompressor},
 }  # type: Dict[int, Tuple[Any, Any]]
 
 

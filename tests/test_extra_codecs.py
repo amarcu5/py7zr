@@ -19,6 +19,10 @@ try:
     import ppmd as Ppmd  # type: ignore
 except ImportError:
     Ppmd = None
+try:
+    import lz4.stream as LZ4
+except ImportError:
+    LZ4 = None
 
 
 testdata_path = pathlib.Path(os.path.dirname(__file__)).joinpath('data')
@@ -275,3 +279,17 @@ def test_compress_ppmd_2(tmp_path):
         archive.writeall(tmp_path.joinpath('10000SalesRecords.csv'))
     #
     p7zip_test(tmp_path / 'target.7z')
+
+
+@pytest.mark.files
+@pytest.mark.skipif(LZ4 is None, reason="lz4 library does not exist.")
+def test_extract_lz4(tmp_path):
+    with py7zr.SevenZipFile(testdata_path.joinpath('lz4.7z').open('rb')) as archive:
+        archive.extractall(path=tmp_path)
+
+
+@pytest.mark.files
+@pytest.mark.skipif(LZ4 is None, reason="lz4 library does not exist.")
+def test_extract_p7zip_lz4(tmp_path):
+    with py7zr.SevenZipFile(testdata_path.joinpath('p7zip-lz4.7z').open('rb')) as archive:
+        archive.extractall(path=tmp_path)
